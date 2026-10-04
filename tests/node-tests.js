@@ -39,6 +39,26 @@ function assertLongSampleParsedCorrectly(parsedCsv) {
 }
 
 describe('PapaParse', function() {
+	[false, true].forEach(function(header) {
+		it('readable stream previews respect the total row limit (header=' + header + ')', function(done) {
+			var stream = require('stream').Readable.from(['a,b\n0,1\n', '2,3\n4,5\n', '6,7\n8,9']);
+			Papa.parse(stream, {
+				delimiter: ',',
+				newline: '\n',
+				header: header,
+				preview: header ? 2 : 3,
+				complete: function(results) {
+					assert.deepEqual(results.data, header
+						? [{a: '0', b: '1'}, {a: '2', b: '3'}]
+						: [['a', 'b'], ['0', '1'], ['2', '3']]);
+					assert.deepEqual(results.errors, []);
+					done();
+				},
+				error: done
+			});
+		});
+	});
+
 	it('readable streams report quote errors only when the malformed row is complete (#882)', function(done) {
 		var stream = require('stream').Readable.from([
 			'first,"bad"inside"\nsecond,"bad"',

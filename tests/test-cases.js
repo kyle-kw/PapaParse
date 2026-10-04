@@ -2189,6 +2189,48 @@ describe('Unparse Tests', function() {
 
 var CUSTOM_TESTS = [
 	{
+		description: "Chunked previews respect the total row limit with and without headers (#228)",
+		expected: true,
+		run: function(callback) {
+			var inputs = [
+				'a,b\n0,1\n2,3\n4,5\n6,7\n8,9',
+				'"a","b"\n"0","1\nx"\n"2","3"\n"4","5"\n"6","7"\n"8","9"'
+			];
+			function checkPreview(input, header, preview, chunkSize) {
+				var expected = Papa.parse(input, {delimiter: ',', newline: '\n', header: header}).data;
+				if (preview)
+					expected = expected.slice(0, preview);
+				var data = [], completed = 0;
+				Papa.parse(input, {
+					delimiter: ',',
+					newline: '\n',
+					header: header,
+					preview: preview,
+					chunkSize: chunkSize,
+					chunk: function(results) {
+						data = data.concat(results.data);
+						assert.deepEqual(results.errors, []);
+					},
+					complete: function() {
+						completed++;
+					}
+				});
+				assert.deepEqual(data, expected,
+					'header=' + header + ', preview=' + preview + ', chunkSize=' + chunkSize);
+				assert.equal(completed, 1);
+			}
+			inputs.forEach(function(input) {
+				[false, true].forEach(function(header) {
+					for (var preview = 0; preview <= 7; preview++) {
+						for (var chunkSize = 1; chunkSize <= input.length; chunkSize++)
+							checkPreview(input, header, preview, chunkSize);
+					}
+				});
+			});
+			callback(true);
+		}
+	},
+	{
 		description: "Incomplete rows defer quote errors without discarding completed row errors",
 		expected: {
 			data: [['first', 'bad"inside']],
