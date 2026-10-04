@@ -1649,7 +1649,13 @@ License: MIT
 			function finish(value)
 			{
 				if (ignoreLastRow)
+				{
+					// The unfinished row is parsed again with the next chunk. Defer its
+					// errors too, while preserving errors from rows already emitted.
+					while (errors.length && errors[errors.length - 1].row === data.length)
+						errors.pop();
 					return returnable();
+				}
 				if (typeof value === 'undefined')
 					value = input.substring(cursor);
 				row.push(value);

@@ -2189,6 +2189,62 @@ describe('Unparse Tests', function() {
 
 var CUSTOM_TESTS = [
 	{
+		description: "Incomplete rows defer quote errors without discarding completed row errors",
+		expected: {
+			data: [['first', 'bad"inside']],
+			errors: [{
+				type: 'Quotes',
+				code: 'InvalidQuotes',
+				message: 'Trailing quote on quoted field is malformed',
+				row: 0,
+				index: 7
+			}]
+		},
+		run: function(callback) {
+			var results = new Papa.Parser({delimiter: ',', newline: '\n'}).parse(
+				'first,"bad"inside"\nsecond,"bad"inside', 0, true);
+			callback({data: results.data, errors: results.errors});
+		}
+	},
+	{
+		description: "Chunked malformed quoted rows report each error once (#882)",
+		expected: true,
+		run: function(callback) {
+			var inputs = [
+				'first,"bad"inside"\nsecond,"bad"inside"\nlast,ok',
+				'first,"bad"inside"\nsecond,"bad"inside',
+				'x,y,z,t\n5,3,2,4\n5,6,4,1\n5,9,3,2\n10,3,1,"5\n10,6,1,"5\n10,9,5,"5\n15,3,4,"5\n15,6,0,"5\n'
+			];
+			function errorCodes(results) {
+				return results.errors.map(function(error) {
+					return error.code;
+				});
+			}
+			function checkChunkSize(input, expected, chunkSize) {
+				var data = [], errors = [];
+				Papa.parse(input, {
+					delimiter: ',',
+					newline: '\n',
+					chunkSize: chunkSize,
+					chunk: function(results) {
+						assert.isTrue(results.data.length > 0 || results.errors.length === 0,
+							'No errors should be emitted before their row at chunk size ' + chunkSize);
+						data = data.concat(results.data);
+						errors = errors.concat(errorCodes(results));
+					}
+				});
+				assert.deepEqual(data, expected.data, 'Data at chunk size ' + chunkSize);
+				assert.deepEqual(errors, errorCodes(expected), 'Errors at chunk size ' + chunkSize);
+			}
+			inputs.forEach(function(input) {
+				var expected = Papa.parse(input, {delimiter: ',', newline: '\n'});
+				for (var chunkSize = 1; chunkSize <= input.length; chunkSize++)
+					checkChunkSize(input, expected, chunkSize);
+			});
+			callback(true);
+		}
+	},
+	{
 		description: "Pause and resume works (Regression Test for Bug #636)",
 		disabled: !XHR_ENABLED,
 		timeout: 30000,

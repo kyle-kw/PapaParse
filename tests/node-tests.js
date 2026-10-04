@@ -39,6 +39,35 @@ function assertLongSampleParsedCorrectly(parsedCsv) {
 }
 
 describe('PapaParse', function() {
+	it('readable streams report quote errors only when the malformed row is complete (#882)', function(done) {
+		var stream = require('stream').Readable.from([
+			'first,"bad"inside"\nsecond,"bad"',
+			'inside',
+			'"\nlast,ok'
+		]);
+		var chunks = [];
+		Papa.parse(stream, {
+			delimiter: ',',
+			newline: '\n',
+			chunk: function(results) {
+				chunks.push({
+					data: results.data,
+					errors: results.errors.map(function(error) { return error.code; })
+				});
+			},
+			complete: function() {
+				assert.deepEqual(chunks, [
+					{data: [['first', 'bad"inside']], errors: ['InvalidQuotes']},
+					{data: [], errors: []},
+					{data: [['second', 'bad"inside']], errors: ['InvalidQuotes']},
+					{data: [['last', 'ok']], errors: []}
+				]);
+				done();
+			},
+			error: done
+		});
+	});
+
 	it('synchronously parsed CSV should be correctly parsed', function() {
 		assertLongSampleParsedCorrectly(Papa.parse(longSampleRawCsv));
 	});
