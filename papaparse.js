@@ -1124,10 +1124,6 @@ License: MIT
 			return numWithN >= r.length / 2 ? '\r\n' : '\r';
 		};
 
-		function testEmptyLine(s) {
-			return _config.skipEmptyLines === 'greedy' ? s.join('').trim() === '' : s.length === 1 && s[0].length === 0;
-		}
-
 		function testFloat(s) {
 			if (FLOAT.test(s)) {
 				var floatValue = parseFloat(s);
@@ -1149,7 +1145,7 @@ License: MIT
 			if (_config.skipEmptyLines)
 			{
 				_results.data = _results.data.filter(function(d) {
-					return !testEmptyLine(d);
+					return !testEmptyLine(d, _config.skipEmptyLines);
 				});
 			}
 
@@ -1295,7 +1291,7 @@ License: MIT
 				}).parse(input);
 
 				for (var j = 0; j < preview.data.length; j++) {
-					if (skipEmptyLines && testEmptyLine(preview.data[j])) {
+					if (skipEmptyLines && testEmptyLine(preview.data[j], skipEmptyLines)) {
 						emptyLinesCount++;
 						continue;
 					}
@@ -1346,6 +1342,10 @@ License: MIT
 			}
 			_results.errors.push(error);
 		}
+	}
+
+	function testEmptyLine(s, skipEmptyLines) {
+		return skipEmptyLines === 'greedy' ? s.join('').trim() === '' : s.length === 1 && s[0].length === 0;
 	}
 
 	/** https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions */
@@ -1417,7 +1417,7 @@ License: MIT
 
 			// Establish starting state
 			cursor = 0;
-			var data = [], errors = [], row = [], lastCursor = 0;
+			var data = [], errors = [], row = [], lastCursor = 0, emptyRowCount = 0;
 
 			if (!input)
 				return returnable();
@@ -1427,6 +1427,8 @@ License: MIT
 				var rows = input.split(newline);
 				for (var i = 0; i < rows.length; i++)
 				{
+					if (preview && !stepIsFunction && data.length - emptyRowCount >= preview)
+						return returnable(true);
 					row = rows[i];
 					cursor += row.length;
 
@@ -1446,7 +1448,7 @@ License: MIT
 					}
 					else
 						pushRow(row.split(delim));
-					if (preview && i >= preview)
+					if (preview && stepIsFunction && i >= preview)
 					{
 						data = data.slice(0, preview);
 						return returnable(true);
@@ -1557,7 +1559,7 @@ License: MIT
 									return returnable();
 							}
 
-							if (preview && data.length >= preview)
+							if (preview && data.length - emptyRowCount >= preview)
 								return returnable(true);
 
 							break;
@@ -1615,7 +1617,7 @@ License: MIT
 							return returnable();
 					}
 
-					if (preview && data.length >= preview)
+					if (preview && data.length - emptyRowCount >= preview)
 						return returnable(true);
 
 					continue;
@@ -1629,6 +1631,10 @@ License: MIT
 
 			function pushRow(row)
 			{
+				// Keep raw rows for consistent error positions, but do not count empty
+				// rows against the preview when the handle will filter them out.
+				if (preview && config.skipEmptyLines && testEmptyLine(row, config.skipEmptyLines))
+					emptyRowCount++;
 				data.push(row);
 				lastCursor = cursor;
 			}
@@ -1745,6 +1751,7 @@ License: MIT
 				step(returnable());
 				data = [];
 				errors = [];
+				emptyRowCount = 0;
 			}
 		};
 
