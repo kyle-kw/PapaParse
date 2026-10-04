@@ -1138,6 +1138,17 @@ License: MIT
 
 		function processResults()
 		{
+			if (IS_PAPA_WORKER && _config.step)
+			{
+				// Core parser errors use chunk-local row indexes, before empty rows
+				// and the header are removed. Keep their association while filtering.
+				_results.rowErrors = [];
+				_results.errors.forEach(function(error) {
+					if (error.row < _results.data.length)
+						addRowError(error, error.row);
+				});
+			}
+
 			if (_results && _delimiterError)
 			{
 				addError('Delimiter', 'UndetectableDelimiter', 'Unable to auto-detect delimiting character; defaulted to \'' + Papa.DefaultDelimiter + '\'');
@@ -1146,9 +1157,16 @@ License: MIT
 
 			if (_config.skipEmptyLines)
 			{
-				_results.data = _results.data.filter(function(d) {
-					return !testEmptyLine(d);
+				var rowErrors = [];
+				_results.data = _results.data.filter(function(d, i) {
+					if (testEmptyLine(d))
+						return false;
+					if (_results.rowErrors)
+						rowErrors.push(_results.rowErrors[i]);
+					return true;
 				});
+				if (_results.rowErrors)
+					_results.rowErrors = rowErrors;
 			}
 
 			if (needsHeaderRow())
@@ -1178,6 +1196,8 @@ License: MIT
 					_results.data[i].forEach(addHeader);
 
 				_results.data.splice(0, 1);
+				if (_results.rowErrors)
+					_results.rowErrors.splice(0, 1);
 			}
 			// if _results.data[0] is not an array, we are in a step where _results.data is the row.
 			else
@@ -1339,6 +1359,15 @@ License: MIT
 				error.row = row;
 			}
 			_results.errors.push(error);
+			if (_results.rowErrors)
+				addRowError(error, row === undefined ? 0 : row - _rowCounter);
+		}
+
+		function addRowError(error, row)
+		{
+			if (!_results.rowErrors[row])
+				_results.rowErrors[row] = [];
+			_results.rowErrors[row].push(error);
 		}
 	}
 
@@ -1797,7 +1826,7 @@ License: MIT
 				{
 					worker.userStep({
 						data: msg.results.data[i],
-						errors: msg.results.errors,
+						errors: msg.results.rowErrors[i] || [],
 						meta: msg.results.meta
 					}, handle);
 					if (aborted)

@@ -3030,3 +3030,222 @@ describe('Custom Tests', function() {
 		assert.equal(3, webWorkerMessage.results.data.length);
 	});
 });
+
+(Papa.WORKERS_SUPPORTED ? describe : describe.skip)('Worker step errors', function() {
+	var cases = [
+		{
+			description: 'field mismatches belong only to their data row',
+			input: 'a,b\n1,2\n3\n4,5,6\n7,8',
+			config: {header: true},
+			errors: [[], ['TooFewFields'], ['TooManyFields'], []]
+		},
+		{
+			description: 'unterminated quotes belong only to the last row',
+			input: 'a,b\n1,2\n3,"4',
+			config: {},
+			errors: [[], [], ['MissingQuotes']]
+		},
+		{
+			description: 'quote errors stay with a middle row and are not repeated',
+			input: 'ok,1\n"a,"b,c"\nd,e,f',
+			config: {},
+			errors: [[], ['InvalidQuotes'], []]
+		},
+		{
+			description: 'quote and field mismatch errors are preserved together',
+			input: 'a,b,c\n1,2,3\n4,"5"x\n6,7,8',
+			config: {header: true},
+			errors: [[], ['InvalidQuotes', 'MissingQuotes', 'TooFewFields']]
+		},
+		{
+			description: 'headers and skipped empty rows do not shift errors',
+			input: '\na,b\n\n1,2\n\n3\n\n4,"5',
+			config: {header: true, skipEmptyLines: true},
+			errors: [[], ['TooFewFields'], ['MissingQuotes']]
+		},
+		{
+			description: 'greedily skipped rows do not shift errors',
+			input: ', \na,b\n , \n1,2\n, \n3\n4,"5',
+			config: {header: true, skipEmptyLines: 'greedy'},
+			errors: [[], ['TooFewFields'], ['MissingQuotes']]
+		},
+		{
+			description: 'comments do not shift header or quote errors',
+			input: '#comment\na,b\n#ignored\n1,2\n3,"4',
+			config: {header: true, comments: '#'},
+			errors: [[], ['MissingQuotes']]
+		}
+	];
+
+	cases.forEach(function(test) {
+		[undefined, 1, 7, 16].forEach(function(chunkSize) {
+			it(test.description + ' (chunkSize: ' + chunkSize + ')', function(done) {
+				var config = Object.assign({delimiter: ',', newline: '\n'}, test.config);
+				var expectedData = Papa.parse(test.input, config).data;
+				var rows = [];
+				var errors = [];
+				Papa.parse(test.input, Object.assign({}, config, {
+					worker: true,
+					chunkSize: chunkSize,
+					step: function(result) {
+						rows.push(result.data);
+						errors.push(result.errors.map(function(error) { return error.code; }));
+					},
+					complete: function() {
+						assert.deepEqual(rows, expectedData);
+						assert.deepEqual(errors, test.errors);
+						done();
+					}
+				}));
+			});
+		});
+	});
+
+	it('non-row-specific delimiter errors are reported only once', function(done) {
+		var errors = [];
+		Papa.parse('one\ntwo', {
+			worker: true,
+			step: function(result) {
+				errors.push(result.errors.map(function(error) { return error.code; }));
+			},
+			complete: function() {
+				assert.deepEqual(errors, [['UndetectableDelimiter'], []]);
+				done();
+			}
+		});
+	});
+
+	it('mutating one step error array does not affect other rows', function(done) {
+		var errors = [];
+		Papa.parse('a,b\n1\n2,3\n4', {
+			worker: true,
+			header: true,
+			delimiter: ',',
+			step: function(result) {
+				errors.push(result.errors.map(function(error) { return error.code; }));
+				result.errors.length = 0;
+				result.errors.push({code: 'UserError'});
+			},
+			complete: function() {
+				assert.deepEqual(errors, [['TooFewFields'], [], ['TooFewFields']]);
+				done();
+			}
+		});
+	});
+
+	[
+		{input: 'a\none\ntwo', config: {header: true}},
+		{input: '\none\ntwo', config: {skipEmptyLines: true}}
+	].forEach(function(test) {
+		it('delimiter errors on a header or skipped row match non-worker steps: ' + JSON.stringify(test.config), function(done) {
+			var errors = [];
+			Papa.parse(test.input, Object.assign({}, test.config, {
+				worker: true,
+				step: function(result) {
+					errors.push(result.errors);
+				},
+				complete: function() {
+					assert.deepEqual(errors, [[], []]);
+					done();
+				}
+			}));
+		});
+	});
+
+	it('field mismatch row numbers remain global across chunks', function(done) {
+		var errors = [];
+		Papa.parse('a,b\n1\n2,3\n4', {
+			worker: true,
+			header: true,
+			delimiter: ',',
+			chunkSize: 6,
+			step: function(result) {
+				errors.push(result.errors.map(function(error) { return error.row; }));
+			},
+			complete: function() {
+				assert.deepEqual(errors, [[0], [], [2]]);
+				done();
+			}
+		});
+	});
+
+	it('chunk callbacks still receive all errors and no per-step bookkeeping', function(done) {
+		var input = 'a,b\n1\n2,3\n4';
+		var expected = Papa.parse(input, {header: true, delimiter: ','});
+		var chunks = 0;
+		Papa.parse(input, {
+			worker: true,
+			header: true,
+			delimiter: ',',
+			chunk: function(result) {
+				chunks++;
+				assert.deepEqual(result, expected);
+			},
+			complete: function() {
+				assert.strictEqual(chunks, 1);
+				done();
+			}
+		});
+	});
+
+	it('step still takes precedence over chunk and preserves chunk metadata', function(done) {
+		var rows = [];
+		var cursors = [];
+		Papa.parse('a,b\n1,2\n3', {
+			worker: true,
+			header: true,
+			delimiter: ',',
+			step: function(result) {
+				rows.push(result.errors.map(function(error) { return error.code; }));
+				cursors.push(result.meta.cursor);
+			},
+			chunk: function() {
+				assert.fail('chunk must not run when step is configured');
+			},
+			complete: function() {
+				assert.deepEqual(rows, [[], ['TooFewFields']]);
+				assert.deepEqual(cursors, [9, 9]);
+				done();
+			}
+		});
+	});
+
+	it('aborting a step stops later rows and completes once', function(done) {
+		var rows = [];
+		Papa.parse('a,b\n1\n2,3\n4', {
+			worker: true,
+			header: true,
+			delimiter: ',',
+			chunkSize: 6,
+			step: function(result, handle) {
+				rows.push(result.errors.map(function(error) { return error.code; }));
+				handle.abort();
+			},
+			complete: function(result) {
+				assert.deepEqual(rows, [['TooFewFields']]);
+				assert.strictEqual(result.meta.aborted, true);
+				done();
+			}
+		});
+	});
+
+	[undefined, 2].forEach(function(chunkSize) {
+		it('preview still limits worker steps (chunkSize: ' + chunkSize + ')', function(done) {
+			var rows = [];
+			Papa.parse('a,b\n1\n2,3\n4', {
+				worker: true,
+				header: true,
+				delimiter: ',',
+				preview: 2,
+				chunkSize: chunkSize,
+				step: function(result) {
+					rows.push(result.errors.map(function(error) { return error.code; }));
+				},
+				complete: function() {
+					assert.deepEqual(rows, [['TooFewFields'], []]);
+					done();
+				}
+			});
+		});
+	});
+});
