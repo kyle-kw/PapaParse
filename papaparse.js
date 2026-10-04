@@ -1044,7 +1044,9 @@ License: MIT
 			var parserConfig = copy(_config);
 			// Tell the parser the header instead of reguessing on each chunk
 			parserConfig.header = needsHeaderRow();
-			if (_config.preview && _config.header)
+			if (_config.preview && !isFunction(_config.step))
+				parserConfig.preview -= _rowCounter;	// Preview limits the whole input, not each chunk
+			if (_config.preview && parserConfig.header)
 				parserConfig.preview++;	// to compensate for header row
 
 			_input = input;
@@ -1212,8 +1214,12 @@ License: MIT
 
 		function applyHeaderAndDynamicTypingAndTransformation()
 		{
-			if (!_results || (!_config.header && !_config.dynamicTyping && !_config.transform))
+			if (!_results)
 				return _results;
+			if (!_config.header && !_config.dynamicTyping && !_config.transform) {
+				_rowCounter += _results.data.length;
+				return _results;
+			}
 
 			function processRow(rowSource, i)
 			{
