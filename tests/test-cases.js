@@ -577,7 +577,8 @@ var CORE_PARSER_TESTS = [
 		config: { fastMode: true, preview: 2 },
 		expected: {
 			data: [['a', 'b', 'c'], ['d', 'e', 'f']],
-			errors: []
+			errors: [],
+			meta: {cursor: 12, truncated: true}
 		}
 	},
 	{
@@ -2190,41 +2191,54 @@ describe('Unparse Tests', function() {
 var CUSTOM_TESTS = [
 	{
 		description: "Chunked previews respect the total row limit with and without headers (#228)",
+		timeout: 10000,
 		expected: true,
 		run: function(callback) {
 			var inputs = [
 				'a,b\n0,1\n2,3\n4,5\n6,7\n8,9',
-				'"a","b"\n"0","1\nx"\n"2","3"\n"4","5"\n"6","7"\n"8","9"'
+				'a,b\n0,1\n\n2,3\n4,5\n6,7',
+				'a,b\n0,1\n \t,\t \n2,3\n4,5\n6,7',
+				'"a","b"\n"0","1\nx"\n\n"2","3"\n"4","5"\n"6","7"\n"8","9"'
 			];
-			function checkPreview(input, header, preview, chunkSize) {
-				var expected = Papa.parse(input, {delimiter: ',', newline: '\n', header: header}).data;
+			function checkPreview(input, header, preview, chunkSize, skipEmptyLines, typing) {
+				var config = {
+					delimiter: ',', newline: '\n', header: header, skipEmptyLines: skipEmptyLines,
+					dynamicTyping: typing === 'dynamic',
+					transform: typing === 'transform' ? function(value) { return value.trim(); } : undefined
+				};
+				var expectedResults = Papa.parse(input, config);
+				var expected = expectedResults.data;
 				if (preview)
 					expected = expected.slice(0, preview);
 				var data = [], completed = 0;
-				Papa.parse(input, {
-					delimiter: ',',
-					newline: '\n',
-					header: header,
-					preview: preview,
-					chunkSize: chunkSize,
-					chunk: function(results) {
-						data = data.concat(results.data);
+				config.preview = preview;
+				config.chunkSize = chunkSize;
+				config.chunk = function(results) {
+					data = data.concat(results.data);
+					if (expectedResults.errors.length === 0)
 						assert.deepEqual(results.errors, []);
-					},
-					complete: function() {
-						completed++;
-					}
-				});
+				};
+				config.complete = function() {
+					completed++;
+				};
+				Papa.parse(input, config);
 				assert.deepEqual(data, expected,
-					'header=' + header + ', preview=' + preview + ', chunkSize=' + chunkSize);
+					'header=' + header + ', preview=' + preview + ', chunkSize=' + chunkSize + ', skipEmptyLines=' + skipEmptyLines + ', typing=' + typing);
 				assert.equal(completed, 1);
+			}
+			function checkOptions(input, header, skipEmptyLines, typing) {
+				for (var preview = 0; preview <= 7; preview++) {
+					for (var chunkSize = 1; chunkSize <= input.length; chunkSize++)
+						checkPreview(input, header, preview, chunkSize, skipEmptyLines, typing);
+				}
 			}
 			inputs.forEach(function(input) {
 				[false, true].forEach(function(header) {
-					for (var preview = 0; preview <= 7; preview++) {
-						for (var chunkSize = 1; chunkSize <= input.length; chunkSize++)
-							checkPreview(input, header, preview, chunkSize);
-					}
+					[false, true, 'greedy'].forEach(function(skipEmptyLines) {
+						['plain', 'dynamic', 'transform'].forEach(function(typing) {
+							checkOptions(input, header, skipEmptyLines, typing);
+						});
+					});
 				});
 			});
 			callback(true);
